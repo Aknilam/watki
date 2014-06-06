@@ -9,8 +9,8 @@
 #define COUNT_LIMIT 12
 
 
-#define NUM_FOREST 1
-#define NUM_LUMBERJACK 1
+#define NUM_FOREST 5
+#define NUM_LUMBERJACK 10
 #define NUM_CAR 5
 
 #define INITIAL_TREES 9000
@@ -68,7 +68,7 @@ int yDispTrees = 0;
 int yDispWood = 0;
 
 void delay() {
-  usleep(100000);
+  usleep(500000);
 }
 
 void writeNumberGeneral(int count, int max, int y) {
@@ -166,15 +166,17 @@ void writeRunning() {
 void *forestThread(void *t) {
   long my_id = (long)t;
   pthread_mutex_lock(&trees_mutex);
-  while (transports < FINAL_TRANSPORTS || runningCars > 0) {
+  while (runningCars > 0) {
 
     if (trees + forestGrowth > maxTrees) {
       pthread_cond_wait(&trees_lower_max_cond, &trees_mutex);
     }
 
-    trees += forestGrowth;
+    if (transports < FINAL_TRANSPORTS) {
+      trees += forestGrowth;
+    }
 
-    if (trees >= minTrees + LUMBERJACK_TREES) {
+    if (trees >= minTrees + LUMBERJACK_TREES || transports >= FINAL_TRANSPORTS) {
       pthread_cond_signal(&trees_cut_cond);
     }
 
@@ -196,16 +198,18 @@ void *lumberjackThread(void *t) {
 
   pthread_mutex_lock(&trees_mutex);
   pthread_mutex_lock(&wood_mutex);
-  while (transports < FINAL_TRANSPORTS || runningCars > 0) {
+  while (runningCars > 0) {
     // Check whether to wait
     if (trees < minTrees + LUMBERJACK_TREES) {
       // Run lumberjack to grow trees.
       if (trees + LUMBERJACK_TREES_GROW <= maxTrees) {
 
-        trees += LUMBERJACK_TREES_GROW;
+        if (transports < FINAL_TRANSPORTS) {
+          trees += LUMBERJACK_TREES_GROW;
+        }
 
         // Check condition to signalize
-        if (trees + forestGrowth <= maxTrees) {
+        if (trees + forestGrowth <= maxTrees || transports >= FINAL_TRANSPORTS) {
           pthread_cond_signal(&trees_lower_max_cond);
         }
 
@@ -220,10 +224,12 @@ void *lumberjackThread(void *t) {
     } else {
 
       // Run task to cut trees
-      trees -= LUMBERJACK_TREES;
+      if (transports < FINAL_TRANSPORTS) {
+        trees -= LUMBERJACK_TREES;
+      }
 
       // Check condition to signalize
-      if (trees + forestGrowth <= maxTrees) {
+      if (trees + forestGrowth <= maxTrees || transports >= FINAL_TRANSPORTS) {
         pthread_cond_signal(&trees_lower_max_cond);
       }
 
@@ -238,9 +244,12 @@ void *lumberjackThread(void *t) {
       if (wood + craftedWood > maxWood) {
         pthread_cond_wait(&wood_max_cond, &wood_mutex);
       }
-      wood += craftedWood;
+      
+      if (transports < FINAL_TRANSPORTS) {
+        wood += craftedWood;
+      }
 
-      if (wood >= TRANSPORT_REQUIREMENT) {
+      if (wood >= TRANSPORT_REQUIREMENT || transports >= FINAL_TRANSPORTS) {
         pthread_cond_signal(&wood_car_cond);
       }
 
@@ -267,12 +276,13 @@ void *carThread(void *t) {
       pthread_cond_wait(&wood_car_cond, &wood_mutex);
     }
 
-    int items = TRANSPORT_REQUIREMENT;
-    wood -= items;
-    transports = transports + 1;
-    carRun[my_id] = carRun[my_id] + 1;
+    if (wood >= TRANSPORT_REQUIREMENT && transports < FINAL_TRANSPORTS) {
+        wood -= TRANSPORT_REQUIREMENT;
+        transports = transports + 1;
+        carRun[my_id] = carRun[my_id] + 1;
+    }
 
-    if (wood + craftedWood <= maxWood) {
+    if (wood + craftedWood <= maxWood || transports >= FINAL_TRANSPORTS) {
       pthread_cond_signal(&wood_max_cond);
     }
 
@@ -288,7 +298,7 @@ void *carThread(void *t) {
 }
 
 void *writeThread(void *t) {
-  while (transports < FINAL_TRANSPORTS) {
+  while (runningCars > 0) {
     for (long i = 0; i < NUM_FOREST; i++) {
       writeForest(i);
     }
