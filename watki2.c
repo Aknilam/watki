@@ -4,13 +4,8 @@
 #include <unistd.h> // sleep, usleep
 #include <ncurses.h>
 
-#define NUM_THREADS 4
-#define TCOUNT 20
-#define COUNT_LIMIT 12
-
-
 #define NUM_FOREST 5
-#define NUM_LUMBERJACK 10
+#define NUM_LUMBERJACK 3
 #define NUM_CAR 5
 
 #define INITIAL_TREES 9000
@@ -143,20 +138,14 @@ void writeText5(char text[], int arg1, int arg2, int arg3, int arg4, int arg5, i
 
 void writeForest(int my_id) {
   writeText3("forest %ld grows trees: %d/%d.", my_id, trees, maxTrees, my_id);
-  //writeTrees(trees);
-  //writeWood(wood);
 }
 
 void writeLumberjack(int my_id) {
   writeText5("lumberjack %ld cut trees forest can grow trees: %d/%d, wood: %d/%d.", my_id, trees, maxTrees, wood, maxWood, NUM_FOREST + my_id);
-  //writeTrees(trees);
-  //writeWood(wood);
 }
 
 void writeCar(int my_id) {
   writeText5("car %ld runs somewhere and leaves wood: %d/%d, transport: %d/%d.", my_id, wood, maxWood, transports, FINAL_TRANSPORTS, NUM_FOREST + NUM_LUMBERJACK + my_id);
-  //writeTrees(trees);
-  //writeWood(wood);
 }
 
 void writeRunning() {
@@ -165,8 +154,8 @@ void writeRunning() {
 
 void *forestThread(void *t) {
   long my_id = (long)t;
-  pthread_mutex_lock(&trees_mutex);
   while (runningCars > 0) {
+    pthread_mutex_lock(&trees_mutex);
 
     if (trees + forestGrowth > maxTrees) {
       pthread_cond_wait(&trees_lower_max_cond, &trees_mutex);
@@ -179,8 +168,6 @@ void *forestThread(void *t) {
     if (trees >= minTrees + LUMBERJACK_TREES || transports >= FINAL_TRANSPORTS) {
       pthread_cond_signal(&trees_cut_cond);
     }
-
-    //writeForest(my_id);
 
     pthread_mutex_unlock(&trees_mutex);
 
@@ -196,9 +183,8 @@ void *forestThread(void *t) {
 void *lumberjackThread(void *t) {
   long my_id = (long)t;
 
-  pthread_mutex_lock(&trees_mutex);
-  pthread_mutex_lock(&wood_mutex);
   while (runningCars > 0) {
+    pthread_mutex_lock(&trees_mutex);
     // Check whether to wait
     if (trees < minTrees + LUMBERJACK_TREES) {
       // Run lumberjack to grow trees.
@@ -217,8 +203,6 @@ void *lumberjackThread(void *t) {
 
         pthread_mutex_unlock(&trees_mutex);
         pthread_mutex_unlock(&wood_mutex);
-
-        delay();
       }
       //pthread_cond_wait(&trees_cut_cond, &trees_mutex);
     } else {
@@ -233,13 +217,12 @@ void *lumberjackThread(void *t) {
         pthread_cond_signal(&trees_lower_max_cond);
       }
 
-      // Write data
-      //writeLumberjack(my_id);
-
       // Unlock resource
       pthread_mutex_unlock(&trees_mutex);
 
       delay();
+
+      pthread_mutex_lock(&wood_mutex);
 
       if (wood + craftedWood > maxWood) {
         pthread_cond_wait(&wood_max_cond, &wood_mutex);
@@ -253,11 +236,10 @@ void *lumberjackThread(void *t) {
         pthread_cond_signal(&wood_car_cond);
       }
 
-      //writeLumberjack(my_id);
       pthread_mutex_unlock(&wood_mutex);
-
-      delay();
     }
+
+    delay();
 
     lumberjackRun[my_id]++;
   }
@@ -269,8 +251,8 @@ void *lumberjackThread(void *t) {
 
 void *carThread(void *t) {
   long my_id = (long)t;
-  pthread_mutex_lock(&wood_mutex);
   while (transports < FINAL_TRANSPORTS) {
+    pthread_mutex_lock(&wood_mutex);
 
     if (wood < TRANSPORT_REQUIREMENT) {
       pthread_cond_wait(&wood_car_cond, &wood_mutex);
@@ -286,7 +268,6 @@ void *carThread(void *t) {
       pthread_cond_signal(&wood_max_cond);
     }
 
-    //writeCar(my_id);
     pthread_mutex_unlock(&wood_mutex);
 
     delay();
@@ -311,68 +292,6 @@ void *writeThread(void *t) {
     writeRunning();
     usleep(100000);
   }
-  pthread_exit(NULL);
-}
-
-
-
-int count = 0;
-pthread_mutex_t count_mutex;
-pthread_cond_t count_threshold_cv;
-
-int i;
-
-void *inc_count(void *t) {
-  long my_id = (long)t;
-
-  for (i = 0; i < TCOUNT; i++) {
-    pthread_mutex_lock(&count_mutex);
-    count += 2;
-
-    if (count >= COUNT_LIMIT) {
-      pthread_cond_signal(&count_threshold_cv);
-      writeText2("inc_count(): thread %ld, count = %d  Threshold reached.", my_id, count, 0);
-    }
-    writeText2("inc_count(): thread %ld, count = %d, unlocking mutex", my_id, count, 0);
-    writeNumber(count, yDisp + 6);
-    pthread_mutex_unlock(&count_mutex);
-
-    sleep(1);
-  }
-
-  usleep(1);
-  pthread_cond_signal(&count_threshold_cv);
-  pthread_exit(NULL);
-}
-
-void *destroyer(void *t) {
-
-  pthread_mutex_lock(&count_mutex);
-
-  pthread_cond_wait(&count_threshold_cv, &count_mutex);
-  count = 5;
-  writeText0("inc_count(): destroyer destroyed");
-
-  writeNumber(count, yDisp + 6);
-  pthread_mutex_unlock(&count_mutex);
-  pthread_exit(NULL);
-}
-
-void *watch_count(void *t) {
-  long my_id = (long)t;
-
-  writeText1("Starting watch_count(): thread %ld", my_id, 0);
-
-  pthread_mutex_lock(&count_mutex);
-  while (count<COUNT_LIMIT && i<TCOUNT-1) {
-    pthread_cond_wait(&count_threshold_cv, &count_mutex);
-    writeText1("watch_count(): thread %ld Condition signal received.", my_id, 0);
-    count -= 10;
-    writeText2("watch_count(): thread %ld count now = %d.", my_id, count, 0);
-    sleep(1);
-  }
-  pthread_mutex_unlock(&count_mutex);
-  writeNumber(count, yDisp + 6);
   pthread_exit(NULL);
 }
 
@@ -419,26 +338,6 @@ int main (int argc, char *argv[]) {
     pthread_join(threads[i], NULL);
   }
 
-
-/*
-  long t1 = 1, t2 = 2, t3 = 3;
-  pthread_t threads[4];
-  pthread_attr_t attr;
-
-  pthread_mutex_init(&count_mutex, NULL);
-  pthread_cond_init (&count_threshold_cv, NULL);
-
-  pthread_attr_init(&attr);
-  pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
-  pthread_create(&threads[0], &attr, watch_count, (void *)t1);
-  pthread_create(&threads[1], &attr, inc_count, (void *)t2);
-  pthread_create(&threads[2], &attr, inc_count, (void *)t3);
-  pthread_create(&threads[3], &attr, destroyer, NULL);
-
-
-  for (int i=0; i<NUM_THREADS; i++) {
-    pthread_join(threads[i], NULL);
-  }*/
   usleep(1);
 
   writeText1("Main(): Waited on %d threads. Done.", numberOfThreads, 0);
