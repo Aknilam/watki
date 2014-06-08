@@ -162,12 +162,14 @@ void writeText5(char text[], int arg1, int arg2, int arg3, int arg4, int arg5, i
 }
 
 void writeDescription(int line) {
-  writeText0("forest         stock               transport", line);
+  writeText0("forest                                stock                            transport", line);
 }
 
 void writeForest(int my_id) {
   writeText3("forest %ld grows trees: %d/%d.", my_id, trees, maxTrees, my_id);
 }
+
+bool ifWriteNewForest = false;
 
 void writeLumberjack(int my_id) {
   writeText5("lumberjack %ld cut trees forest can grow trees: %d/%d, wood: %d/%d.", my_id, trees, maxTrees, wood, maxWood, NUM_FOREST + my_id);
@@ -198,7 +200,11 @@ void writeNewLumberjack(int my_id, int actual, int whole) {
     tab[i] = ' ';
   }
   
-  writeText0(tab, NUM_FOREST + my_id + 1);
+  int offset = my_id + 1;
+  if (ifWriteNewForest) {
+    offset += NUM_FOREST;
+  }
+  writeText0(tab, offset);
 }
 
 void writeCar(int my_id) {
@@ -230,7 +236,11 @@ void writeNewCar(int my_id, int actual, int whole) {
   for (int i = car + 1; i < 80; i++) {
     tab[i] = ' ';
   }
-  writeText0(tab, NUM_FOREST + NUM_LUMBERJACK + my_id + 1);
+  int offset = NUM_LUMBERJACK + my_id + 1;
+  if (ifWriteNewForest) {
+    offset += NUM_FOREST;
+  }
+  writeText0(tab, offset);
 }
 
 void writeRunning(int i) {
@@ -255,11 +265,12 @@ void *writeThread(void *t) {
     }*/
     //writeRunning(onceAgain);
     writeRaw(0);
+    writeDescription(1);
     for (long i = 0; i < NUM_LUMBERJACK; i++) {
-      writeNewLumberjack(i, actualLumberjack[i], wholeLumberjack[i]);
+      writeNewLumberjack(i + 1, actualLumberjack[i], wholeLumberjack[i]);
     }
     for (long i = 0; i < NUM_CAR; i++) {
-      writeNewCar(i, actualCar[i], wholeCar[i]);
+      writeNewCar(i + 1, actualCar[i], wholeCar[i]);
     }
     usleep(DELAY_TIME / 50);
 
