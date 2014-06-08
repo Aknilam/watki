@@ -1,17 +1,17 @@
 #include <pthread.h>
 #include <stdio.h>
-#include <stdlib.h>
+#include <stdlib.h> // rand
 #include <unistd.h> // sleep, usleep
 #include <ncurses.h>
 
-#define NUM_FOREST 5
-#define NUM_LUMBERJACK 3
-#define NUM_CAR 5
+#define NUM_FOREST 2
+#define NUM_LUMBERJACK 5
+#define NUM_CAR 7
 
-#define INITIAL_TREES 9000
-#define INITIAL_WOOD 400
+#define INITIAL_TREES 18000
+#define INITIAL_WOOD 40
 
-#define FINAL_TRANSPORTS 50
+#define FINAL_TRANSPORTS 20
 
 
 #define MAX_WOOD_STOCK 2000
@@ -26,6 +26,7 @@
 #define FOREST_GROWTH 0.1
 #define TRANSPORT_REQUIREMENT 20
 
+#define DELAY_TIME 2000000
 
 long trees = INITIAL_TREES;
 long minTrees = FOREST_AREA * MIN_AFFORESTATION;
@@ -38,6 +39,7 @@ long forestGrowth = (double)(FOREST_GROWTH) * FOREST_AREA;
 long craftedWood = TREE_TO_WOOD * LUMBERJACK_TREES;
 
 volatile long transports = 0;
+volatile long pendingTransports = 0;
 volatile long runningForests = NUM_FOREST;
 volatile long runningLumberjacks = NUM_LUMBERJACK;
 volatile long runningCars = NUM_CAR;
@@ -54,6 +56,10 @@ volatile int forestRun[NUM_FOREST];
 volatile int lumberjackRun[NUM_LUMBERJACK];
 volatile int carRun[NUM_CAR];
 
+volatile int actualLumberjack[NUM_LUMBERJACK];
+volatile int wholeLumberjack[NUM_LUMBERJACK];
+volatile int actualCar[NUM_CAR];
+volatile int wholeCar[NUM_CAR];
 
 int kolumny = 0;
 int rzedy = 0;
@@ -62,8 +68,19 @@ int yDisp = 0;
 int yDispTrees = 0;
 int yDispWood = 0;
 
-void delay() {
-  usleep(500000);
+int randomDelay() {
+  srand(time(NULL));
+  return DELAY_TIME + (rand() / (RAND_MAX + 1.0)) * (DELAY_TIME * 4 / 10);
+}
+
+void delay(int value) {
+  usleep(value);
+}
+
+void delayOld() {
+  srand(time(NULL));
+  int value = DELAY_TIME + (rand() / (RAND_MAX + 1.0)) * (DELAY_TIME * 4 / 10);
+  usleep(value);
 }
 
 void writeNumberGeneral(int count, int max, int y) {
@@ -96,8 +113,8 @@ void writeWood(int count) {
   writeNumberGeneral(count, maxWood, yDispWood);
 }
 
-void writeText0(char text[]) {
-  move(yDisp, xDisp);
+void writeText0(char text[], int line) {
+  move(line, xDisp);
   printw(text);
   clrtoeol();
   refresh();
@@ -128,12 +145,24 @@ void writeText3(char text[], int arg1, int arg2, int arg3, int diff) {
   usleep(1000);
 }
 
+void writeText4(char text[], int arg1, int arg2, int arg3, int arg4, int diff) {
+  move(0 + diff, xDisp);
+  printw(text, arg1, arg2, arg3, arg4);
+  clrtoeol();
+  refresh();
+  usleep(1000);
+}
+
 void writeText5(char text[], int arg1, int arg2, int arg3, int arg4, int arg5, int diff) {
   move(0 + diff, xDisp);
   printw(text, arg1, arg2, arg3, arg4, arg5);
   clrtoeol();
   refresh();
   usleep(1000);
+}
+
+void writeDescription(int line) {
+  writeText0("forest         stock               transport", line);
 }
 
 void writeForest(int my_id) {
@@ -144,12 +173,101 @@ void writeLumberjack(int my_id) {
   writeText5("lumberjack %ld cut trees forest can grow trees: %d/%d, wood: %d/%d.", my_id, trees, maxTrees, wood, maxWood, NUM_FOREST + my_id);
 }
 
+void writeNewLumberjack(int my_id, int actual, int whole) {
+  char tab[80];
+  if (actual % 2 == 0) {
+    tab[1] = tab[0] = '/';
+  } else {
+    tab[1] = tab[0] = '\\';
+  }
+
+  int lumberjack = (actual * (38 - 2)) / whole + 2;
+
+  for (int i = 2; i < lumberjack; i++) {
+    tab[i] = ' ';
+  }
+  tab[lumberjack] = 'o';
+
+  for (int i = lumberjack + 1; i < 39; i++) {
+    tab[i] = ' ';
+  }
+
+  tab[39] = tab[40] = tab[41] = '#';
+
+  for (int i = 42; i < 80; i++) {
+    tab[i] = ' ';
+  }
+  
+  writeText0(tab, NUM_FOREST + my_id + 1);
+}
+
 void writeCar(int my_id) {
   writeText5("car %ld runs somewhere and leaves wood: %d/%d, transport: %d/%d.", my_id, wood, maxWood, transports, FINAL_TRANSPORTS, NUM_FOREST + NUM_LUMBERJACK + my_id);
 }
 
-void writeRunning() {
-  writeText3("forest: %d, lumberjack: %d, car: %d.", runningForests, runningLumberjacks, runningCars, NUM_FOREST + NUM_LUMBERJACK + NUM_CAR);
+void writeNewCar(int my_id, int actual, int whole) {
+  char tab[80];
+  if (actual % 2 == 0) {
+    tab[1] = tab[0] = '/';
+  } else {
+    tab[1] = tab[0] = '\\';
+  }
+
+  for (int i = 2; i < 39; i++) {
+    tab[i] = ' ';
+  }
+
+  tab[39] = tab[40] = tab[41] = '#';
+
+  int car = (actual * (40 - 2)) / whole + 42;
+
+  for (int i = 42; i < car; i++) {
+    tab[i] = ' ';
+  }
+ 
+  tab[car] = 'x';
+
+  for (int i = car + 1; i < 80; i++) {
+    tab[i] = ' ';
+  }
+  writeText0(tab, NUM_FOREST + NUM_LUMBERJACK + my_id + 1);
+}
+
+void writeRunning(int i) {
+  writeText4("%d: forest: %d, lumberjack: %d, car: %d.", i, runningForests, runningLumberjacks, runningCars, NUM_FOREST + NUM_LUMBERJACK + NUM_CAR);
+}
+
+void writeRaw(int i) {
+  writeText5("trees: %d/%d, wood: %d/%d, transports: %d", trees, maxTrees, wood, maxWood, transports, i);
+}
+
+void *writeThread(void *t) {
+//  int onceAgain = 0;
+  while (runningCars > 0) {// || onceAgain < numberOfThreads) {
+    /*for (long i = 0; i < NUM_FOREST; i++) {
+      writeForest(i);
+    }
+    for (long i = 0; i < NUM_LUMBERJACK; i++) {
+      writeLumberjack(i);
+    }
+    for (long i = 0; i < NUM_CAR; i++) {
+      writeCar(i);
+    }*/
+    //writeRunning(onceAgain);
+    writeRaw(0);
+    for (long i = 0; i < NUM_LUMBERJACK; i++) {
+      writeNewLumberjack(i, actualLumberjack[i], wholeLumberjack[i]);
+    }
+    for (long i = 0; i < NUM_CAR; i++) {
+      writeNewCar(i, actualCar[i], wholeCar[i]);
+    }
+    usleep(DELAY_TIME / 50);
+
+//    if (runningCars == 0 && onceAgain < numberOfThreads) {
+//      onceAgain++;
+//    }
+  }
+  pthread_exit(NULL);
 }
 
 void *forestThread(void *t) {
@@ -161,17 +279,17 @@ void *forestThread(void *t) {
       pthread_cond_wait(&trees_lower_max_cond, &trees_mutex);
     }
 
-    if (transports < FINAL_TRANSPORTS) {
+    if (transports + pendingTransports < FINAL_TRANSPORTS) {
       trees += forestGrowth;
     }
 
-    if (trees >= minTrees + LUMBERJACK_TREES || transports >= FINAL_TRANSPORTS) {
+    if (trees >= minTrees + LUMBERJACK_TREES || transports + pendingTransports >= FINAL_TRANSPORTS) {
       pthread_cond_signal(&trees_cut_cond);
     }
 
     pthread_mutex_unlock(&trees_mutex);
 
-    delay();
+    delayOld();
     forestRun[my_id]++;
   }
   runningForests--; 
@@ -190,56 +308,91 @@ void *lumberjackThread(void *t) {
       // Run lumberjack to grow trees.
       if (trees + LUMBERJACK_TREES_GROW <= maxTrees) {
 
-        if (transports < FINAL_TRANSPORTS) {
+        if (transports + pendingTransports < FINAL_TRANSPORTS) {
           trees += LUMBERJACK_TREES_GROW;
         }
 
         // Check condition to signalize
-        if (trees + forestGrowth <= maxTrees || transports >= FINAL_TRANSPORTS) {
+        if (trees + forestGrowth <= maxTrees || transports + pendingTransports >= FINAL_TRANSPORTS) {
           pthread_cond_signal(&trees_lower_max_cond);
         }
-
-        //writeLumberjack(my_id);
 
         pthread_mutex_unlock(&trees_mutex);
         pthread_mutex_unlock(&wood_mutex);
       }
-      //pthread_cond_wait(&trees_cut_cond, &trees_mutex);
+
+      delayOld();
     } else {
 
       // Run task to cut trees
-      if (transports < FINAL_TRANSPORTS) {
+      if (transports + pendingTransports < FINAL_TRANSPORTS) {
+        actualLumberjack[my_id] = 0;
+        wholeLumberjack[my_id] = 1;
+
         trees -= LUMBERJACK_TREES;
+
+        int ranDelay = randomDelay() / 5;
+        delay(ranDelay);
       }
 
-      // Check condition to signalize
-      if (trees + forestGrowth <= maxTrees || transports >= FINAL_TRANSPORTS) {
+     // Check condition to signalize
+      if (trees + forestGrowth <= maxTrees || transports + pendingTransports >= FINAL_TRANSPORTS) {
         pthread_cond_signal(&trees_lower_max_cond);
       }
 
       // Unlock resource
       pthread_mutex_unlock(&trees_mutex);
 
-      delay();
+      if (transports + pendingTransports < FINAL_TRANSPORTS) {
+        int ranDelay = randomDelay();
+        actualLumberjack[my_id] = 0;
+        wholeLumberjack[my_id] = ranDelay;
+        int singleDelay = ranDelay / 200;
+        for (int i = 0; i < 195; i++) {
+          delay(singleDelay);
+          actualLumberjack[my_id] += singleDelay;
+        }
+        for (int i = 195; i < 200; i++) {
+          delay(singleDelay);
+        }
+      }
 
       pthread_mutex_lock(&wood_mutex);
 
       if (wood + craftedWood > maxWood) {
         pthread_cond_wait(&wood_max_cond, &wood_mutex);
       }
+
+      actualLumberjack[my_id] = 100;
+      wholeLumberjack[my_id] = 100;
       
-      if (transports < FINAL_TRANSPORTS) {
+      if (transports + pendingTransports < FINAL_TRANSPORTS) {
         wood += craftedWood;
+
+        int ranDelay = randomDelay() / 5;
+        delay(ranDelay);
       }
 
-      if (wood >= TRANSPORT_REQUIREMENT || transports >= FINAL_TRANSPORTS) {
+      if (wood >= TRANSPORT_REQUIREMENT || transports + pendingTransports >= FINAL_TRANSPORTS) {
         pthread_cond_signal(&wood_car_cond);
       }
 
       pthread_mutex_unlock(&wood_mutex);
-    }
 
-    delay();
+      if (transports + pendingTransports < FINAL_TRANSPORTS) {
+        int ranDelay = randomDelay();
+        wholeLumberjack[my_id] = ranDelay;
+        actualLumberjack[my_id] = ranDelay;
+        int singleDelay = ranDelay / 200;
+        for (int i = 0; i < 190; i++) {
+          delay(singleDelay);
+          actualLumberjack[my_id] -= singleDelay;
+        }
+        for (int i = 190; i < 200; i++) {
+          delay(singleDelay);
+        }
+      }
+    }
 
     lumberjackRun[my_id]++;
   }
@@ -251,47 +404,66 @@ void *lumberjackThread(void *t) {
 
 void *carThread(void *t) {
   long my_id = (long)t;
-  while (transports < FINAL_TRANSPORTS) {
+  while (transports + pendingTransports < FINAL_TRANSPORTS) {
+    if (transports + pendingTransports < FINAL_TRANSPORTS) {
+      int ranDelay = randomDelay();
+      wholeCar[my_id] = ranDelay;
+      actualCar[my_id] = ranDelay;
+      int singleDelay = ranDelay / 200;
+      for (int i = 0; i < 190; i++) {
+        delay(singleDelay);
+        actualCar[my_id] -= singleDelay;
+      }
+      for (int i = 190; i < 200; i++) {
+        delay(singleDelay);
+      }
+    }
+
     pthread_mutex_lock(&wood_mutex);
 
     if (wood < TRANSPORT_REQUIREMENT) {
       pthread_cond_wait(&wood_car_cond, &wood_mutex);
     }
 
-    if (wood >= TRANSPORT_REQUIREMENT && transports < FINAL_TRANSPORTS) {
+    wholeCar[my_id] = 100;
+    actualCar[my_id] = 0;
+
+    if (wood >= TRANSPORT_REQUIREMENT && transports + pendingTransports < FINAL_TRANSPORTS) {
+        pendingTransports++;
+
+        int ranDelay = randomDelay() / 5;
+        delay(ranDelay);
+
         wood -= TRANSPORT_REQUIREMENT;
-        transports = transports + 1;
-        carRun[my_id] = carRun[my_id] + 1;
     }
 
-    if (wood + craftedWood <= maxWood || transports >= FINAL_TRANSPORTS) {
+    if (wood + craftedWood <= maxWood || transports + pendingTransports >= FINAL_TRANSPORTS) {
       pthread_cond_signal(&wood_max_cond);
     }
 
     pthread_mutex_unlock(&wood_mutex);
 
-    delay();
+    if (transports + pendingTransports < FINAL_TRANSPORTS) {
+      int ranDelay = randomDelay();
+      wholeCar[my_id] = ranDelay;
+      actualCar[my_id] = 0;
+      int singleDelay = ranDelay / 200;
+      for (int i = 0; i < 200; i++) {
+        delay(singleDelay);
+        actualCar[my_id] += singleDelay;
+      }
+    }
+
+    int ranDelay = randomDelay() / 5;
+    delay(ranDelay);
+
+    pendingTransports--;
+    transports = transports + 1;
+    carRun[my_id] = carRun[my_id] + 1;
   }
 
   runningCars--;
   usleep(100);
-  pthread_exit(NULL);
-}
-
-void *writeThread(void *t) {
-  while (runningCars > 0) {
-    for (long i = 0; i < NUM_FOREST; i++) {
-      writeForest(i);
-    }
-    for (long i = 0; i < NUM_LUMBERJACK; i++) {
-      writeLumberjack(i);
-    }
-    for (long i = 0; i < NUM_CAR; i++) {
-      writeCar(i);
-    }
-    writeRunning();
-    usleep(100000);
-  }
   pthread_exit(NULL);
 }
 
@@ -325,10 +497,14 @@ int main (int argc, char *argv[]) {
   for (long i = 0; i < NUM_LUMBERJACK; i++) {
     pthread_create(&threads[threadCounter++], &attr, lumberjackThread, (void *)i);
     lumberjackRun[i] = 0;
+    actualLumberjack[i] = 5;
+    wholeLumberjack[i] = 100;
   }
   for (long i = 0; i < NUM_CAR; i++) {
     pthread_create(&threads[threadCounter++], &attr, carThread, (void *)i);
     carRun[i] = 0;
+    actualCar[i] = 1;
+    wholeCar[i] = 1;
   }
 
   pthread_create(&writingThread, &attr, writeThread, NULL);
